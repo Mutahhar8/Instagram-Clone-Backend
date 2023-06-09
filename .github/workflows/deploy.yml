@@ -1,0 +1,95 @@
+name: Build and Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+
+env:
+  DB_NAME: ${{ secrets.DB_NAME }}
+  DB_USER: ${{ secrets.DB_USER }}
+  DB_PWD: ${{ secrets.DB_PWD }}
+  DB_HOST: ${{ secrets.DB_HOST }}
+  DJANGO_SECRET_KEY: ${{ secrets.DJANGO_SECRET_KEY }}
+  GS_BUCKET_NAME: ${{ secrets.GS_BUCKET_NAME }}
+  GS_CREDENTIALS: ${{secrets.GS_CREDENTIALS }}
+  AUTH_CLIENT_ID: ${{secrets.AUTH_CLIENT_ID }}
+  AUTH_CLIENT_SECRET: ${{secrets.AUTH_CLIENT_SECRET }}
+  ACC_TYPE: ${{secrets.ACC_TYPE }}
+  ACC_ID: ${{secrets.ACC_ID }}
+  ACC_PID: ${{secrets.ACC_PID }}
+  ACC_PK: ${{secrets.ACC_PK }}
+  ACC_EMAIL: ${{secrets.ACC_EMAIL }}
+  ACC_CID: ${{secrets.ACC_CID }}
+  ACC_AUTH_URI: ${{secrets.ACC_AUTH_URI }}
+  ACC_TOKEN_URI: ${{secrets.ACC_TOKEN_URI }}
+  ACC_PROVIDER: ${{secrets.ACC_PROVIDER }}
+  ACC_CURL: ${{secrets.ACC_CURL }}
+  SERVICE_NAME: ${{secrets.SERVICE_NAME }}
+  PROJECT_ID: ${{secrets.PROJECT_ID}}
+  RUN_REGION: us-central1
+jobs:
+  setup-build-deploy:
+    name: Setup, Build, and Deploy
+    runs-on: ubuntu-latest
+    steps:
+      ##### CREATE RUNTIME ENV FILE FOR DEPLOYMENT, AND ADD SERVICE-ACCOUNT-KEY.json IF NEEDED
+      - name: Creating Runtime .env and add service-account-key
+        run: |
+          touch .env
+          echo  DB_NAME="${{ secrets.DB_NAME }}" >> .env
+          echo  DB_USER="${{ secrets.DB_USER }}" >> .env
+          echo  DB_PWD="${{ secrets.DB_PWD }}" >> .env
+          echo  DJANGO_SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" >> .env
+          echo  DB_HOST="${{ secrets.DB_HOST }}" >> .env
+          echo  GS_BUCKET_NAME="${{ secrets.GS_BUCKET_NAME }}" >> .env
+          echo  GS_CREDENTIALS = "${{secrets.GS_CREDENTIALS }}" >> .env
+          echo  AUTH_CLIENT_ID = "${{secrets.AUTH_CLIENT_ID }}" >> .env
+          echo  AUTH_CLIENT_SECRET = "${{secrets.AUTH_CLIENT_SECRET }}" >> .env
+          echo  ACC_TYPE = "${{secrets.ACC_TYPE }}" >> .env
+          echo  ACC_ID = "${{secrets.ACC_ID }}" >> .env
+          echo  ACC_PID = "${{secrets.ACC_PID }}" >> .env
+          echo  ACC_PK = "${{secrets.ACC_PK }}" >> .env
+          echo  ACC_EMAIL = "${{secrets.ACC_EMAIL }}" >> .env
+          echo  ACC_CID = "${{secrets.ACC_CID }}" >> .env
+          echo  ACC_AUTH_URI = "${{secrets.ACC_AUTH_URI }}" >> .env
+          echo  ACC_TOKEN_URI = "${{secrets.ACC_TOKEN_URI }}" >> .env
+          echo  ACC_PROVIDER = "${{secrets.ACC_PROVIDER }}" >> .env
+          echo  ACC_CURL = "${{secrets.ACC_CURL }}" >> .env
+      
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      # - name: Setup Python
+      #   uses: actions/setup-python@v2
+      #   with:
+      #     python-version: 3.10
+      # Setup gcloud CLI
+      - name: Connect to gcloud
+        uses: google-github-actions/setup-gcloud@v0
+        with:
+          service_account_key: ${{ secrets.SERVICE_ACCOUNT }}
+          project_id: ${{ secrets.PROJECT_ID }}
+
+
+# BUILDING THE DOCKER
+      - name: Build and push Docker image
+        run: |
+          gcloud auth configure-docker
+          docker build -t gcr.io/${{ secrets.PROJECT_ID }}/${{ env.SERVICE_NAME }} .
+          docker push gcr.io/${{ secrets.PROJECT_ID }}/${{ env.SERVICE_NAME }}
+
+      - name: Deploy to Google Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} --image gcr.io/${{ secrets.PROJECT_ID }}/${{ env.SERVICE_NAME }} --platform managed --region ${{ env.RUN_REGION }} --allow-unauthenticated --port 8080
+        
+      - name: Delete previous images
+        run: |
+          gcloud container images list --repository=gcr.io/${{ secrets.PROJECT_ID }}/instagram-service --format='get(digest)' | xargs -I {} gcloud container images delete gcr.io/${{ secrets.PROJECT_ID }}/instagram-service@{} --quiet  
+      # - name: Delete previous images
+      #   run: |
+      #     LATEST_TAG=$(gcloud run revisions describe ${{ env.SERVICE_NAME }} --format='get(image.digest)' | cut -d ":" -f 2)
+      #     gcloud container images list-tags gcr.io/${{ secrets.PROJECT_ID }}/${{ env.SERVICE_NAME }} --filter='tags:*' --format='get(digest)' --limit=99999 | grep -v "$LATEST_TAG" | xargs -I {} gcloud container images delete gcr.io/${{ secrets.PROJECT_ID }}/${{ env.SERVICE_NAME }}@{} --quiet
+        
+      # - name: Delete previous images
+      #   run: |
+      #     gcloud container images list-tags gcr.io/${{ secrets.PROJECT_ID }}/${{ env.SERVICE_NAME }} --filter='tags:*' --format='get(digest)' --limit=99999 | grep -v "$(gcloud run revisions describe ${{ env.SERVICE_NAME }} --format='get(image.digest)')" | xargs -I {} gcloud container images delete gcr.io/${{ secrets.PROJECT_ID }}/${{ env.SERVICE_NAME }}@{} --quiet
